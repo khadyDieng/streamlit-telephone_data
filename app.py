@@ -1,8 +1,9 @@
 """
-Application Streamlit — Prédiction de l'état d'un portable
-Conversion directe de l'application Gradio d'origine.
+Streamlit — État d'un téléphone portable (TP3, Telephone_data)
+Construite sur le modèle d'application fourni par le prof : les objets sauvegardés
+dans le notebook sont rechargés, puis le meilleur des sept classifieurs fait la prédiction.
 
-Lancement en local :  streamlit run app.py
+En local :  streamlit run app.py
 """
 
 import numpy as np
@@ -10,126 +11,73 @@ import pandas as pd
 import joblib as jb
 import streamlit as st
 
-
-# Configuration de la page
-st.set_page_config(
-    page_title="Prédiction de l'état d'un portable",
-    page_icon="📱",
-    layout="centered",
-)
-
-DESCRIPTION = (
-    "Ce modèle de machine learning permet de prédire l'état d'un portable en partant "
-    "du prix, de l'adresse, de la marque, de la dimension de l'écran, du nombre de RAM "
-    "et du stockage."
-)
+st.set_page_config(page_title="État d'un téléphone", page_icon="📶", layout="centered")
 
 
-# Chargement des artefacts (mis en cache : chargés une seule fois)
-
+# ---------- Objets issus du notebook (chargés une seule fois) ----------
 @st.cache_resource
-def load_artifacts():
-    encoders = jb.load("encoders.joblib")   # encodeurs (adresse, marque)
-    uniques = jb.load("uniques.joblib")     # valeurs uniques
-    scaler = jb.load("scaler.joblib")       # normaliseur
-    model = jb.load("best_model.joblib")    # meilleur modèle (Gradient Boosting)
-    return encoders, uniques, scaler, model
+def charger_objets():
+    encoders = jb.load("encoders.joblib")   # adresse, marque, etat
+    uniques = jb.load("uniques.joblib")     # modalités de chaque variable texte
+    scaler = jb.load("scaler.joblib")       # StandardScaler
+    modele = jb.load("best_model.joblib")   # classifieur retenu (Gradient Boosting)
+    return encoders, uniques, scaler, modele
 
 
-encoders, uniques, scaler, model = load_artifacts()
-clasnames = uniques[2]  # noms des classes
+encoders, uniques, scaler, modele = charger_objets()
+etats = uniques[2]  # D'occasion / Neuf / Réconditionné / Venant
 
 
-
-# Fonction de prédiction simple
-
+# ---------- Prédiction pour un téléphone ----------
 def Pred_func(prix, adresse, marque, dim_ecr, ram, stockage):
-    # Encoder l'adresse et la marque
-    adresse = encoders[0].transform([adresse])[0]
-    marque = encoders[1].transform([marque])[0]
-    # Vecteur des valeurs numériques
-    x_new = np.array([prix, adresse, marque, dim_ecr, ram, stockage])
-    x_new = x_new.reshape(1, -1)  # conversion en un tableau 2D
-    # Normaliser les données
-    x_new = scaler.transform(x_new)
-    # Prédire
-    y_pred = model.predict(x_new)
-    return clasnames[y_pred[0]]
+    code_adresse = encoders[0].transform([adresse])[0]
+    code_marque = encoders[1].transform([marque])[0]
+    # même ordre de colonnes que dans le notebook
+    vecteur = np.array([prix, code_adresse, code_marque, dim_ecr, ram, stockage]).reshape(1, -1)
+    vecteur_norm = scaler.transform(vecteur)
+    classe = modele.predict(vecteur_norm)[0]
+    return etats[classe]
 
 
-
-# Fonction de prédiction multiple
-
-def Pred_func_csv(file):
-    # Lire le fichier csv
-    df = pd.read_csv(file)
-    predictions = []
-    # Boucle sur les lignes du dataframe
-    for row in df.iloc[:, :].values:
-        # prédiction simple
-        y_pred = Pred_func(row[0], row[1], row[2], row[3], row[4], row[5])
-        predictions.append(y_pred)
-    df["etat"] = predictions
-    return df
+# ---------- Prédiction pour un fichier ----------
+def Pred_func_csv(fichier):
+    tableau = pd.read_csv(fichier)
+    resultats = []
+    for ligne in tableau.values:
+        resultats.append(Pred_func(ligne[0], ligne[1], ligne[2], ligne[3], ligne[4], ligne[5]))
+    tableau["etat prédit"] = resultats
+    return tableau
 
 
+st.title("📶 État d'un téléphone")
+st.caption("Neuf, venant, reconditionné ou d'occasion ? Prédiction à partir du prix, du lieu, de la marque et des caractéristiques.")
+onglet_un, onglet_csv = st.tabs(["Un téléphone", "Fichier CSV"])
 
-# Interface
+with onglet_un:
+    gauche, droite = st.columns(2)
+    with gauche:
+        prix = st.number_input("Prix (FCFA)", min_value=0, value=250_000, step=5_000)
+        adresse = st.selectbox("Lieu de vente", list(uniques[0]))
+        marque = st.selectbox("Marque", list(uniques[1]))
+    with droite:
+        dim_ecr = st.number_input("Taille de l'écran (pouces)", min_value=0.0, value=6.0, step=0.1)
+        ram = st.number_input("Mémoire vive (Go)", min_value=0, value=4, step=1)
+        stockage = st.number_input("Stockage (Go)", min_value=0, value=128, step=16)
 
-st.title("📱 Prédiction de l'état d'un portable")
-
-onglet1, onglet2 = st.tabs(["Prédiction simple", "Prédiction multiple"])
-
-# ----------------------------- Onglet 1 -------------------------------
-with onglet1:
-    st.subheader("Prédire l'état d'un portable avec une entrée")
-    st.write(DESCRIPTION)
-
-    with st.form("formulaire_simple"):
-        col1, col2 = st.columns(2)
-        with col1:
-            prix = st.number_input("Prix", value=0.0, step=1000.0, format="%.2f")
-            adresse = st.selectbox("Adresse", options=list(uniques[0]))
-            marque = st.selectbox("Marque", options=list(uniques[1]))
-        with col2:
-            dim_ecr = st.number_input("Dimension écran", value=0.0, step=0.1, format="%.2f")
-            ram = st.number_input("Nombre de RAM", value=0.0, step=1.0, format="%.2f")
-            stockage = st.number_input("Stockage", value=0.0, step=1.0, format="%.2f")
-
-        soumettre = st.form_submit_button("Prédire", type="primary")
-
-    if soumettre:
+    if st.button("Prédire", type="primary", use_container_width=True):
         try:
             resultat = Pred_func(prix, adresse, marque, dim_ecr, ram, stockage)
-            st.success(f"**État du portable :** {resultat}")
-        except Exception as e:
-            st.error(f"Erreur lors de la prédiction : {e}")
-
-# ----------------------------- Onglet 2 -------------------------------
-with onglet2:
-    st.subheader("Prédire l'état d'un portable avec plusieurs entrées")
-    st.write(DESCRIPTION)
-    st.caption(
-        "Le fichier CSV doit contenir, dans cet ordre, les colonnes : "
-        "prix, adresse, marque, dimension écran, RAM, stockage."
-    )
-
-    fichier = st.file_uploader("Importer un fichier CSV", type=["csv"])
-
+            st.success(f"**État estimé :** {resultat}")
+        except Exception as erreur:
+            st.error(f"Prédiction impossible : {erreur}")
+with onglet_csv:
+    st.info("Colonnes attendues, dans cet ordre : prix, adresse, marque, dim_ecr, ram, stockage.")
+    fichier = st.file_uploader("Choisir un fichier CSV", type="csv")
     if fichier is not None:
         try:
-            with st.spinner("Prédictions en cours…"):
-                df_resultat = Pred_func_csv(fichier)
-
-            st.success(f"{len(df_resultat)} prédiction(s) effectuée(s).")
-            st.dataframe(df_resultat, use_container_width=True)
-
-            st.download_button(
-                label="⬇️ Télécharger le fichier CSV",
-                data=df_resultat.to_csv(index=False).encode("utf-8"),
-                file_name="predictions.csv",
-                mime="text/csv",
-                type="primary",
-            )
-        except Exception as e:
-            st.error(f"Erreur lors du traitement du fichier : {e}")
+            tableau = Pred_func_csv(fichier)
+            st.dataframe(tableau, use_container_width=True)
+            st.download_button("Télécharger les résultats", tableau.to_csv(index=False).encode("utf-8"),
+                               "resultats_telephones.csv", "text/csv")
+        except Exception as erreur:
+            st.error(f"Fichier non traité : {erreur}")
